@@ -1,7 +1,7 @@
 import { useRef, useState, type ReactNode } from "react"
 import { Icon } from "./Icon"
 
-type Screen = "home" | "appointments" | "appointment" | "contigo" | "language" | "pre" | "summary" | "preSent" | "turn" | "consultation" | "share" | "shareSent" | "translate" | "interpreter" | "reports" | "report" | "question" | "questionSent" | "human"
+type Screen = "home" | "appointments" | "appointment" | "contigo" | "call" | "language" | "pre" | "summary" | "preSent" | "turn" | "consultation" | "share" | "shareSent" | "translate" | "interpreter" | "reports" | "report" | "question" | "questionSent" | "human"
 type Lang = "ES" | "EN" | "DE"
 const languages: Record<Lang, string> = {
   ES: "Español",
@@ -101,6 +101,54 @@ const exampleAnswers: Record<Lang, string[]> = {
     "Nein, sonst nichts",
   ],
 }
+type Speaker = "ia" | "patient" | "agent"
+const speakers: Record<Speaker, string> = {
+  ia: "ASISTENTE DE CITAS · IA",
+  patient: "ANA",
+  agent: "LAURA · EQUIPO DE CITAS",
+}
+// Each tap on "Continuar" reveals the next turn of the simulated call.
+const callTurns: { who: Speaker, text: string }[][] = [
+  [
+    {
+      who: "ia",
+      text: "Hola, has llamado a Hospiten Estepona. Soy el asistente virtual de citas: puedo pedir, cambiar o anular una cita. Si prefieres hablar con una persona, dilo en cualquier momento.",
+    },
+  ],
+  [
+    { who: "patient", text: "Quiero pedir cita en Traumatología. Me duele la rodilla." },
+    {
+      who: "ia",
+      text: "Tengo hueco el lunes 19 de mayo a las 11:30 con la Dra. Elena Martín. ¿Te viene bien?",
+    },
+  ],
+  [
+    { who: "patient", text: "Sí, perfecto. ¿Crees que es grave?" },
+    {
+      who: "ia",
+      text: "No puedo darte información clínica; la doctora te lo explicará en la consulta. Tu cita queda confirmada: lunes 19 de mayo, 11:30.",
+    },
+  ],
+  [
+    {
+      who: "ia",
+      text: "Te envío un SMS con la confirmación y un enlace para preparar tu consulta. ¿Necesitas algo más?",
+    },
+    { who: "patient", text: "No, gracias." },
+  ],
+]
+const handoffLines: { who: Speaker, text: string }[] = [
+  { who: "patient", text: "Prefiero hablar con una persona." },
+  {
+    who: "ia",
+    text: "Claro. Te paso con el equipo de citas y le envío el resumen de la llamada para que no tengas que repetir nada.",
+  },
+  {
+    who: "agent",
+    text: "Hola, Ana. Ya tengo el resumen: te confirmo Traumatología el lunes 19 de mayo a las 11:30 con la Dra. Elena Martín. Te llega un SMS con el enlace a la pre-consulta.",
+  },
+]
+const callTimes = ["0:05", "0:38", "1:12", "1:31"]
 const parameters = [
   {
     name: "Colesterol LDL",
@@ -154,6 +202,7 @@ const titles: Record<Screen, string> = {
   appointments: "Mis citas",
   appointment: "Detalle de la cita",
   contigo: "Hospiten Contigo",
+  call: "Asistente de citas",
   language: "Pre-consulta",
   pre: "Pre-consulta",
   summary: "Revisar resumen",
@@ -235,6 +284,8 @@ export default function App() {
   const [openParameter, setOpenParameter] = useState<number | null>(0)
   const [doubt, setDoubt] = useState("")
   const [humanRequested, setHumanRequested] = useState(false)
+  const [callStep, setCallStep] = useState(0)
+  const [handoffAt, setHandoffAt] = useState<number | null>(null)
   const appointment = appointments[selectedAppointment]
   const report = reportList[selectedReport]
   const queueCount = called ? 0 : notification ? 2 : 3
@@ -267,6 +318,16 @@ export default function App() {
     setSelectedAppointment(0)
     go("language")
   }
+  const startCall = () => {
+    setCallStep(0)
+    setHandoffAt(null)
+    go("call")
+  }
+  const callLines =
+    handoffAt === null
+      ? callTurns.slice(0, callStep + 1).flat()
+      : [...callTurns.slice(0, handoffAt + 1).flat(), ...handoffLines]
+  const callEnded = handoffAt !== null || callStep === callTurns.length - 1
   const addAnswer = (value: string) => {
     if (value.trim() && answers.length < 5) {
       setAnswers((a) => [...a, value.trim()])
@@ -285,11 +346,17 @@ export default function App() {
     month: "long",
     year: "numeric",
   })
-  const footer = !["home", "human", "language", "pre", "summary", "preSent", "report"].includes(screen)
+  const footer = !["home", "human", "call", "language", "pre", "summary", "preSent", "report"].includes(screen)
   const answerText = (i: number) => answers[i] || "No indicado"
   const moduleCards = (
     <div className="module-list">
       {[
+        {
+          title: "Asistente de citas",
+          copy: "Pide, cambia o anula tu cita por teléfono",
+          icon: "phone",
+          action: startCall,
+        },
         {
           title: "Pre-consulta",
           copy: preSent
@@ -326,10 +393,21 @@ export default function App() {
   )
   const journey = [
     {
+      label: "Cita",
+      description:
+        appointment.id === 0
+          ? "Confirmada por teléfono · SMS recibido"
+          : "Confirmada",
+      state: "Hecho",
+      action: startCall,
+      disabled: appointment.id !== 0,
+    },
+    {
       label: "Pre-consulta",
       description: preSent ? "Resumen enviado" : "Preparar mi visita",
       state: appointment.past || preSent ? "Hecho" : "Pendiente",
       action: startPre,
+      disabled: appointment.id !== 0,
     },
     {
       label: "Turno",
@@ -348,6 +426,7 @@ export default function App() {
             ? "Ahora"
             : "Pendiente",
       action: () => go("turn"),
+      disabled: appointment.id !== 0,
     },
     {
       label: "Consulta",
@@ -360,6 +439,7 @@ export default function App() {
           ? "Ahora"
           : "Pendiente",
       action: () => go("consultation"),
+      disabled: appointment.id !== 0 || !called,
     },
     {
       label: "Informe",
@@ -368,6 +448,7 @@ export default function App() {
         : "Después de tu consulta",
       state: appointment.past ? "Hecho" : "Pendiente",
       action: openAppointmentReport,
+      disabled: !appointment.past,
     },
   ]
   const translation = {
@@ -476,7 +557,7 @@ export default function App() {
                 </span>
                 <Icon name="arrow" size={22} />
               </button>
-              <section className="contigo-section">
+              <section className="contigo-section card">
                 <div className="section-heading">
                   <Icon name="heart" size={25} />
                   <h2>Hospiten Contigo</h2>
@@ -663,12 +744,7 @@ export default function App() {
                       className="journey-step"
                       key={step.label}
                       onClick={step.action}
-                      disabled={
-                        (i === 0 && appointment.id !== 0) ||
-                        (i === 1 && appointment.id !== 0) ||
-                        (i === 2 && (appointment.id !== 0 || !called)) ||
-                        (i === 3 && !appointment.past)
-                      }
+                      disabled={step.disabled}
                     >
                       <span
                         className={`step-number ${step.state.toLowerCase()}`}
@@ -715,6 +791,100 @@ export default function App() {
                 <Icon name="arrow" />
               </button>
               {moduleCards}
+            </>
+          )}
+          {screen === "call" && (
+            <>
+              <section className="call-card card">
+                <span className="round-icon">
+                  <Icon name="phone" size={26} />
+                </span>
+                <h2>Hospiten Estepona</h2>
+                <p>
+                  {callEnded
+                    ? "Llamada finalizada"
+                    : `En llamada · ${callTimes[callStep]}`}
+                </p>
+              </section>
+              <div className="notice">
+                <Icon name="shield" size={21} />
+                <span>
+                  Llamada simulada. El asistente gestiona citas y no da
+                  información clínica.
+                </span>
+              </div>
+              <div className="chat-stack">
+                {callLines.map((line, i) => (
+                  <div
+                    className={`bubble ${line.who === "patient" ? "patient" : "assistant"}`}
+                    key={i}
+                  >
+                    <span className="speaker">{speakers[line.who]}</span>
+                    <p>{line.text}</p>
+                  </div>
+                ))}
+              </div>
+              {handoffAt !== null && (
+                <section className="card summary-card call-summary">
+                  <h3>Resumen que recibe Laura</h3>
+                  <dl>
+                    <div>
+                      <dt>Paciente</dt>
+                      <dd>Ana López · identificada por su teléfono</dd>
+                    </div>
+                    <div>
+                      <dt>Gestión</dt>
+                      <dd>Pedir cita en Traumatología · dolor de rodilla</dd>
+                    </div>
+                    <div>
+                      <dt>Estado</dt>
+                      <dd>
+                        {handoffAt === 1
+                          ? "Hueco ofrecido: lun 19 mayo, 11:30 · sin confirmar"
+                          : "Cita confirmada: lun 19 mayo, 11:30"}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Motivo del traspaso</dt>
+                      <dd>Lo pide la paciente</dd>
+                    </div>
+                  </dl>
+                </section>
+              )}
+              {!callEnded ? (
+                <>
+                  <Button onClick={() => setCallStep((s) => s + 1)}>
+                    CONTINUAR LLAMADA
+                    <Icon name="arrow" size={20} />
+                  </Button>
+                  {callStep > 0 && (
+                    <Button secondary onClick={() => setHandoffAt(callStep)}>
+                      <Icon name="user" size={21} />
+                      Pasar con una persona
+                    </Button>
+                  )}
+                </>
+              ) : (
+                <>
+                  <button className="notification-card sms-card" onClick={startPre}>
+                    <span className="round-icon">
+                      <Icon name="chat" />
+                    </span>
+                    <span>
+                      <strong>SMS · Hospiten</strong>
+                      <span>
+                        Cita confirmada: Traumatología, lun 19 may, 11:30, Dra.
+                        Elena Martín. Prepara tu consulta:{" "}
+                        <u>enlace a la pre-consulta</u>
+                      </span>
+                    </span>
+                    <Icon name="arrow" size={20} />
+                  </button>
+                  <Button secondary onClick={() => openAppointment(0)}>
+                    Ver la cita en la app
+                  </Button>
+                </>
+              )}
             </>
           )}
           {screen === "language" && (
