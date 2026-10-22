@@ -1,7 +1,7 @@
-import { useRef, useState, type ReactNode } from "react"
+import { useEffect, useRef, useState, type ReactNode } from "react"
 import { Icon } from "./Icon"
 
-type Screen = "home" | "appointments" | "appointment" | "contigo" | "call" | "language" | "pre" | "summary" | "preSent" | "turn" | "consultation" | "share" | "shareSent" | "translate" | "interpreter" | "reports" | "report" | "question" | "questionSent" | "human"
+type Screen = "home" | "appointments" | "appointment" | "contigo" | "call" | "settings" | "language" | "pre" | "summary" | "preSent" | "turn" | "consultation" | "share" | "shareSent" | "translate" | "interpreter" | "reports" | "report" | "question" | "questionSent" | "human"
 type Lang = "ES" | "EN" | "DE"
 const languages: Record<Lang, string> = {
   ES: "Español",
@@ -107,37 +107,73 @@ const speakers: Record<Speaker, string> = {
   patient: "ANA",
   agent: "LAURA · EQUIPO DE CITAS",
 }
-// Each tap on "Continuar" reveals the next turn of the simulated call.
-const callTurns: { who: Speaker, text: string }[][] = [
-  [
-    {
-      who: "ia",
-      text: "Hola, has llamado a Hospiten Estepona. Soy el asistente virtual de citas: puedo pedir, cambiar o anular una cita. Si prefieres hablar con una persona, dilo en cualquier momento.",
-    },
-  ],
-  [
-    { who: "patient", text: "Quiero pedir cita en Traumatología. Me duele la rodilla." },
-    {
-      who: "ia",
-      text: "Tengo hueco el lunes 19 de mayo a las 11:30 con la Dra. Elena Martín. ¿Te viene bien?",
-    },
-  ],
-  [
-    { who: "patient", text: "Sí, perfecto. ¿Crees que es grave?" },
-    {
-      who: "ia",
-      text: "No puedo darte información clínica; la doctora te lo explicará en la consulta. Tu cita queda confirmada: lunes 19 de mayo, 11:30.",
-    },
-  ],
-  [
-    {
-      who: "ia",
-      text: "Te envío un SMS con la confirmación y un enlace para preparar tu consulta. ¿Necesitas algo más?",
-    },
-    { who: "patient", text: "No, gracias." },
-  ],
+type CallLine = { who: Speaker, text: string }
+// Each "Simular respuesta" reveals the next turn; the summary fields of the
+// turns reached so far are what the agent receives on handoff.
+const callTurns: { lines: CallLine[], summary?: [string, string][] }[] = [
+  {
+    lines: [
+      {
+        who: "ia",
+        text: "Hola, has llamado a Hospiten. Soy el asistente virtual de citas: puedo pedir, cambiar o anular una cita. Si prefieres hablar con una persona, dilo en cualquier momento.",
+      },
+    ],
+  },
+  {
+    lines: [
+      { who: "patient", text: "Quiero pedir cita en Traumatología." },
+      { who: "ia", text: "De acuerdo. ¿Me dices tu nombre completo y tu fecha de nacimiento?" },
+    ],
+    summary: [["Gestión", "Pedir cita · Traumatología"]],
+  },
+  {
+    lines: [
+      { who: "patient", text: "Ana López, 3 de marzo de 1985." },
+      { who: "ia", text: "Gracias, Ana. ¿Cuál es el motivo de la consulta?" },
+    ],
+    summary: [["Paciente", "Ana López · 03/03/1985"]],
+  },
+  {
+    lines: [
+      { who: "patient", text: "Me duele la rodilla derecha desde hace dos semanas." },
+      { who: "ia", text: "Anotado. ¿Prefieres mañana o tarde, y en qué hospital?" },
+    ],
+    summary: [["Motivo indicado", "Dolor de rodilla derecha, desde hace dos semanas"]],
+  },
+  {
+    lines: [
+      { who: "patient", text: "Por la mañana, en Estepona." },
+      {
+        who: "ia",
+        text: "Tengo hueco el lunes 19 de mayo a las 11:30 con la Dra. Elena Martín, en Hospiten Estepona. ¿Te viene bien?",
+      },
+    ],
+    summary: [
+      ["Preferencia", "Mañanas · Hospiten Estepona"],
+      ["Estado", "Hueco ofrecido: lun 19 mayo, 11:30 · sin confirmar"],
+    ],
+  },
+  {
+    lines: [
+      { who: "patient", text: "Sí, perfecto. ¿Crees que es grave?" },
+      {
+        who: "ia",
+        text: "No puedo darte información clínica; la doctora te lo explicará en la consulta. Tu cita queda confirmada: lunes 19 de mayo, 11:30. Te envío un SMS con la confirmación y un enlace para preparar tu consulta.",
+      },
+    ],
+    summary: [
+      ["Estado", "Cita confirmada: lun 19 mayo, 11:30 · SMS enviado"],
+      ["Nota", "Preguntó si es grave; no se dio información clínica"],
+    ],
+  },
+  {
+    lines: [
+      { who: "patient", text: "Vale, muchas gracias." },
+      { who: "ia", text: "A ti, Ana. ¡Que te mejores!" },
+    ],
+  },
 ]
-const handoffLines: { who: Speaker, text: string }[] = [
+const handoffLines: CallLine[] = [
   { who: "patient", text: "Prefiero hablar con una persona." },
   {
     who: "ia",
@@ -145,10 +181,15 @@ const handoffLines: { who: Speaker, text: string }[] = [
   },
   {
     who: "agent",
-    text: "Hola, Ana. Ya tengo el resumen: te confirmo Traumatología el lunes 19 de mayo a las 11:30 con la Dra. Elena Martín. Te llega un SMS con el enlace a la pre-consulta.",
+    text: "Hola, soy Laura, del equipo de citas. Ya tengo tu resumen, así que seguimos desde donde lo dejaste.",
   },
 ]
-const callTimes = ["0:05", "0:38", "1:12", "1:31"]
+const relatives = ["Carlos López · Hermano", "Marta López · Madre"]
+const permissionLabels = {
+  reports: "Informes y diagnósticos",
+  appointments: "Citas",
+  turn: "Turno en vivo",
+}
 const parameters = [
   {
     name: "Colesterol LDL",
@@ -197,12 +238,21 @@ const reportList = [
     intro: "Valoración y recomendaciones de seguimiento",
   },
 ]
+// Screens not listed under any section belong to "Contigo".
+const navItems: { title: string, icon: string, target: Screen, screens: Screen[] }[] = [
+  { title: "Inicio", icon: "home", target: "home", screens: ["home"] },
+  { title: "Citas", icon: "calendar", target: "appointments", screens: ["appointments", "appointment"] },
+  { title: "Contigo", icon: "heart", target: "contigo", screens: [] },
+  { title: "Informes", icon: "file", target: "reports", screens: ["reports", "report", "question", "questionSent"] },
+  { title: "Ajustes", icon: "settings", target: "settings", screens: ["settings"] },
+]
 const titles: Record<Screen, string> = {
   home: "Inicio",
   appointments: "Mis citas",
   appointment: "Detalle de la cita",
   contigo: "Hospiten Contigo",
   call: "Asistente de citas",
+  settings: "Ajustes y privacidad",
   language: "Pre-consulta",
   pre: "Pre-consulta",
   summary: "Revisar resumen",
@@ -248,6 +298,57 @@ function IA() {
     </div>
   )
 }
+function Toggle({
+  label,
+  description,
+  checked,
+  onChange,
+}: {
+  label: string
+  description?: string
+  checked: boolean
+  onChange: (checked: boolean) => void
+}) {
+  return (
+    <label className="toggle">
+      <span>
+        <strong>{label}</strong>
+        {description && <span>{description}</span>}
+      </span>
+      <input
+        type="checkbox"
+        role="switch"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+      />
+    </label>
+  )
+}
+function RelativePicker({
+  value,
+  onChange,
+}: {
+  value: string
+  onChange: (relative: string) => void
+}) {
+  return (
+    <div className="language-options">
+      {relatives.map((r) => (
+        <button
+          className={`language-option ${value === r ? "chosen" : ""}`}
+          key={r}
+          onClick={() => onChange(r)}
+        >
+          <span className="round-icon">
+            <Icon name="user" />
+          </span>
+          <strong>{r}</strong>
+          <span className="radio">{value === r && <i />}</span>
+        </button>
+      ))}
+    </div>
+  )
+}
 function Success({ title, text }: { title: string, text: string }) {
   return (
     <div className="success">
@@ -286,8 +387,19 @@ export default function App() {
   const [humanRequested, setHumanRequested] = useState(false)
   const [callStep, setCallStep] = useState(0)
   const [handoffAt, setHandoffAt] = useState<number | null>(null)
+  const [callSeconds, setCallSeconds] = useState(0)
+  const [trustedDraft, setTrustedDraft] = useState("")
+  const [trusted, setTrusted] = useState("")
+  const [permissions, setPermissions] = useState({
+    reports: true,
+    appointments: false,
+    turn: false,
+  })
+  const [aiConsent, setAiConsent] = useState(false)
   const appointment = appointments[selectedAppointment]
   const report = reportList[selectedReport]
+  const activeNav =
+    navItems.find((n) => n.screens.includes(screen))?.title ?? "Contigo"
   const queueCount = called ? 0 : notification ? 2 : 3
   const queueWait = called ? "Es tu turno" : notification ? "≈10 min" : "≈15 min"
   const go = (next: Screen) => {
@@ -321,13 +433,29 @@ export default function App() {
   const startCall = () => {
     setCallStep(0)
     setHandoffAt(null)
+    setCallSeconds(0)
     go("call")
   }
-  const callLines =
-    handoffAt === null
-      ? callTurns.slice(0, callStep + 1).flat()
-      : [...callTurns.slice(0, handoffAt + 1).flat(), ...handoffLines]
+  const reachedTurns = callTurns.slice(0, (handoffAt ?? callStep) + 1)
+  const callLines = [
+    ...reachedTurns.flatMap((t) => t.lines),
+    ...(handoffAt === null ? [] : handoffLines),
+  ]
+  // Later turns overwrite earlier fields with the same label (e.g. "Estado").
+  const callSummary = [...new Map(reachedTurns.flatMap((t) => t.summary ?? []))]
   const callEnded = handoffAt !== null || callStep === callTurns.length - 1
+  const callClock = `${Math.floor(callSeconds / 60)}:${String(callSeconds % 60).padStart(2, "0")}`
+  useEffect(() => {
+    if (screen !== "call" || callEnded) return
+    const timer = setInterval(() => setCallSeconds((s) => s + 1), 1000)
+    return () => clearInterval(timer)
+  }, [screen, callEnded])
+  const simulateReply = () => {
+    setCallStep((s) => s + 1)
+    requestAnimationFrame(() =>
+      scroll.current?.scrollTo({ top: scroll.current.scrollHeight, behavior: "smooth" }),
+    )
+  }
   const addAnswer = (value: string) => {
     if (value.trim() && answers.length < 5) {
       setAnswers((a) => [...a, value.trim()])
@@ -346,7 +474,7 @@ export default function App() {
     month: "long",
     year: "numeric",
   })
-  const footer = !["home", "human", "call", "language", "pre", "summary", "preSent", "report"].includes(screen)
+  const footer = !["home", "human", "call", "settings", "language", "pre", "summary", "preSent", "report"].includes(screen)
   const answerText = (i: number) => answers[i] || "No indicado"
   const moduleCards = (
     <div className="module-list">
@@ -506,8 +634,8 @@ export default function App() {
           <img src={`${import.meta.env.BASE_URL}hospiten-logo.png`} alt="Hospiten" />
           <button
             className="avatar"
-            disabled
-            aria-label="Perfil, fuera del alcance del prototipo"
+            onClick={() => root("settings")}
+            aria-label="Ajustes y privacidad"
           >
             AL
           </button>
@@ -796,14 +924,12 @@ export default function App() {
           {screen === "call" && (
             <>
               <section className="call-card card">
-                <span className="round-icon">
+                <span className={`round-icon ${callEnded ? "" : "live"}`}>
                   <Icon name="phone" size={26} />
                 </span>
-                <h2>Hospiten Estepona</h2>
+                <h2>Hospiten · Citas</h2>
                 <p>
-                  {callEnded
-                    ? "Llamada finalizada"
-                    : `En llamada · ${callTimes[callStep]}`}
+                  {callEnded ? "Llamada finalizada" : "En llamada"} · {callClock}
                 </p>
               </section>
               <div className="notice">
@@ -825,37 +951,35 @@ export default function App() {
                 ))}
               </div>
               {handoffAt !== null && (
-                <section className="card summary-card call-summary">
-                  <h3>Resumen que recibe Laura</h3>
-                  <dl>
-                    <div>
-                      <dt>Paciente</dt>
-                      <dd>Ana López · identificada por su teléfono</dd>
-                    </div>
-                    <div>
-                      <dt>Gestión</dt>
-                      <dd>Pedir cita en Traumatología · dolor de rodilla</dd>
-                    </div>
-                    <div>
-                      <dt>Estado</dt>
-                      <dd>
-                        {handoffAt === 1
-                          ? "Hueco ofrecido: lun 19 mayo, 11:30 · sin confirmar"
-                          : "Cita confirmada: lun 19 mayo, 11:30"}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>Motivo del traspaso</dt>
-                      <dd>Lo pide la paciente</dd>
-                    </div>
-                  </dl>
-                </section>
+                <>
+                  <section className="card summary-card call-summary">
+                    <h3>Resumen que recibe Laura</h3>
+                    <p className="muted left">
+                      Generado con tus {handoffAt}{" "}
+                      {handoffAt === 1 ? "respuesta" : "respuestas"} al asistente.
+                    </p>
+                    <dl>
+                      {[...callSummary, ["Motivo del traspaso", "Lo pide la paciente"]].map(
+                        ([label, value]) => (
+                          <div key={label}>
+                            <dt>{label}</dt>
+                            <dd>{value}</dd>
+                          </div>
+                        ),
+                      )}
+                    </dl>
+                  </section>
+                  <p className="muted">
+                    Fin de la simulación: Laura completa la gestión y la cita
+                    confirmada llega a la app y por SMS.
+                  </p>
+                </>
               )}
               {!callEnded ? (
                 <>
-                  <Button onClick={() => setCallStep((s) => s + 1)}>
-                    CONTINUAR LLAMADA
-                    <Icon name="arrow" size={20} />
+                  <Button onClick={simulateReply}>
+                    <Icon name="mic" size={20} />
+                    SIMULAR RESPUESTA
                   </Button>
                   {callStep > 0 && (
                     <Button secondary onClick={() => setHandoffAt(callStep)}>
@@ -887,14 +1011,122 @@ export default function App() {
               )}
             </>
           )}
+          {screen === "settings" && (
+            <>
+              <div className="notice">
+                <Icon name="shield" size={21} />
+                <span>
+                  Tus datos de salud solo se usan para atenderte. Tú decides
+                  qué compartes y con quién, y puedes cambiarlo cuando quieras.
+                </span>
+              </div>
+              <section className="card settings-card">
+                <h2>Persona de confianza</h2>
+                <p>
+                  Alguien que puede ver tus diagnósticos e informes y ayudarte a
+                  gestionar tu atención. Pensado sobre todo para personas
+                  mayores: lo decides tú.
+                </p>
+                {trusted ? (
+                  <>
+                    <div className="trusted-person">
+                      <span className="round-icon">
+                        <Icon name="user" />
+                      </span>
+                      <strong>{trusted}</strong>
+                    </div>
+                    {(Object.keys(permissionLabels) as (keyof typeof permissionLabels)[]).map(
+                      (key) => (
+                        <Toggle
+                          key={key}
+                          label={permissionLabels[key]}
+                          checked={permissions[key]}
+                          onChange={(on) =>
+                            setPermissions((p) => ({ ...p, [key]: on }))
+                          }
+                        />
+                      ),
+                    )}
+                    <Button
+                      secondary
+                      onClick={() => {
+                        setTrusted("")
+                        setTrustedDraft("")
+                      }}
+                    >
+                      Quitar persona de confianza
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <RelativePicker value={trustedDraft} onChange={setTrustedDraft} />
+                    <Button
+                      disabled={!trustedDraft}
+                      onClick={() => setTrusted(trustedDraft)}
+                    >
+                      AÑADIR PERSONA DE CONFIANZA
+                    </Button>
+                  </>
+                )}
+                <p className="muted left">
+                  Cada permiso se da por separado y se puede retirar en
+                  cualquier momento. Menores de 14 años: la cuenta la gestiona
+                  su tutor. De 14 a 17 años decide el propio menor.
+                </p>
+              </section>
+              <section className="card settings-card">
+                <h2>Mejora de la IA</h2>
+                <Toggle
+                  label="Usar mis datos seudonimizados para mejorar la IA"
+                  description="Opcional y desactivado por defecto. No afecta a tu atención y puedes retirarlo cuando quieras."
+                  checked={aiConsent}
+                  onChange={setAiConsent}
+                />
+              </section>
+              <section className="card summary-card settings-card">
+                <h2>Protección de datos</h2>
+                <dl>
+                  <div>
+                    <dt>Responsable</dt>
+                    <dd>El hospital Hospiten que te atiende.</dd>
+                  </div>
+                  <div>
+                    <dt>Finalidad</dt>
+                    <dd>Gestionar tu atención sanitaria y la comunicación contigo.</dd>
+                  </div>
+                  <div>
+                    <dt>Base jurídica</dt>
+                    <dd>
+                      Asistencia sanitaria (art. 9.2.h RGPD). Compartir con tu
+                      persona de confianza y mejorar la IA, solo con tu
+                      consentimiento.
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Tus derechos</dt>
+                    <dd>
+                      Acceso, rectificación, supresión, oposición, limitación y
+                      portabilidad. Puedes reclamar ante la Agencia Española de
+                      Protección de Datos.
+                    </dd>
+                  </div>
+                </dl>
+                <p className="muted left">
+                  Texto de ejemplo: el texto legal definitivo lo fija Hospiten.
+                </p>
+              </section>
+              <p className="muted">Ajustes simulados · No se guardan datos</p>
+            </>
+          )}
           {screen === "language" && (
             <>
               <IA />
               <div className="intro">
                 <h2>Prepara tu consulta</h2>
                 <p>
-                  Responde a 5 preguntas para que la Dra. Elena Martín conozca
-                  el motivo de tu visita.
+                  Un chat guiado te ayuda a contar a la Dra. Elena Martín el
+                  motivo de tu visita. En la versión real, el asistente adapta
+                  sus preguntas a lo que respondes.
                 </p>
               </div>
               <div className="context-line">
@@ -1249,23 +1481,7 @@ export default function App() {
                 </p>
               </div>
               <h3>Familiares vinculados</h3>
-              <div className="language-options">
-                {["Carlos López · Hermano", "Marta López · Madre"].map((r) => (
-                  <button
-                    className={`language-option ${
-                      relative === r ? "chosen" : ""
-                    }`}
-                    key={r}
-                    onClick={() => setRelative(r)}
-                  >
-                    <span className="round-icon">
-                      <Icon name="user" />
-                    </span>
-                    <strong>{r}</strong>
-                    <span className="radio">{relative === r && <i />}</span>
-                  </button>
-                ))}
-              </div>
+              <RelativePicker value={relative} onChange={setRelative} />
               <div className="notice">
                 <Icon name="shield" size={22} />
                 <span>
@@ -1730,62 +1946,14 @@ export default function App() {
           <p className="prototype-note">Prototipo · Datos ilustrativos</p>
         </main>
         <nav className="bottom-nav" aria-label="Navegación principal">
-          {[
-            {
-              title: "Inicio",
-              icon: "home",
-              target: "home" as Screen,
-              active: screen === "home",
-            },
-            {
-              title: "Citas",
-              icon: "calendar",
-              target: "appointments" as Screen,
-              active: ["appointments", "appointment"].includes(screen),
-            },
-            {
-              title: "Contigo",
-              icon: "heart",
-              target: "contigo" as Screen,
-              active: !["home", "appointments", "appointment"].includes(screen),
-            },
-            {
-              title: "Informes",
-              icon: "file",
-              target: "reports" as Screen,
-              active: [
-                "reports",
-                "report",
-                "question",
-                "questionSent",
-              ].includes(screen),
-            },
-          ].map((item) => (
+          {navItems.map((item) => (
             <button
               key={item.title}
               onClick={() => root(item.target)}
-              className={`${
-                item.active &&
-                !(
-                  item.title === "Contigo" &&
-                  ["reports", "report", "question", "questionSent"].includes(
-                    screen,
-                  )
-                )
-                  ? "nav-active"
-                  : ""
-              } ${item.title === "Contigo" ? "contigo-nav" : ""}`}
-              aria-current={
-                item.active &&
-                !(
-                  item.title === "Contigo" &&
-                  ["reports", "report", "question", "questionSent"].includes(
-                    screen,
-                  )
-                )
-                  ? "page"
-                  : undefined
-              }
+              className={`${item.title === activeNav ? "nav-active" : ""} ${
+                item.title === "Contigo" ? "contigo-nav" : ""
+              }`}
+              aria-current={item.title === activeNav ? "page" : undefined}
             >
               <span className="nav-icon">
                 <Icon name={item.icon} size={25} />
@@ -1793,12 +1961,6 @@ export default function App() {
               <span>{item.title}</span>
             </button>
           ))}
-          <button disabled aria-label="Perfil, fuera del alcance del prototipo">
-            <span className="nav-icon">
-              <Icon name="user" size={25} />
-            </span>
-            <span>Perfil</span>
-          </button>
         </nav>
         <div className="home-indicator">
           <span />
